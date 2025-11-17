@@ -64,17 +64,6 @@ defmodule ExAws.SigV4a do
     end
   end
 
-  @doc """
-  Generates a presigned URL using SigV4a authentication.
-
-  Currently not implemented.
-  """
-  @spec presigned_url(ExAws.Operation.t(), Keyword.t(), Keyword.t()) ::
-          {:ok, String.t()} | {:error, term()}
-  def presigned_url(_operation, _config_overrides \\ [], _options \\ []) do
-    {:error, :not_implemented}
-  end
-
   defp build_config(operation, config_overrides) do
     service = get_service(operation)
     base_config = ExAws.Config.new(service, config_overrides)

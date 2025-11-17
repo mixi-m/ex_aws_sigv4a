@@ -1,21 +1,6 @@
 defmodule ExAws.SigV4aTest do
   use ExUnit.Case, async: false
 
-  describe "presigned_url/3" do
-    test "returns error as it is not yet implemented" do
-      operation = %ExAws.Operation.S3{
-        http_method: :get,
-        bucket: "test-bucket",
-        path: "/test.txt",
-        headers: [],
-        body: "",
-        service: :s3
-      }
-
-      assert {:error, :not_implemented} = ExAws.SigV4a.presigned_url(operation)
-    end
-  end
-
   describe "request/2 helper function tests" do
     @tag :skip
     test "disable_headers_signature is configured" do
