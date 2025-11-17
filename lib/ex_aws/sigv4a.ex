@@ -42,16 +42,22 @@ defmodule ExAws.SigV4a do
   @spec request(ExAws.Operation.t(), Keyword.t() | map()) ::
           {:ok, term()} | {:error, term()}
   def request(operation, config_overrides \\ []) do
+    service = get_service(operation)
     config = build_config(operation, config_overrides)
+
+    # Apply service-specific preprocessing (e.g., add bucket to path for S3)
+    {operation, config} = preprocess_operation(operation, config, service)
+
     url = ExAws.Request.Url.build(operation, config)
     http_method = get_http_method(operation)
     headers = get_headers(operation)
     body = get_body(operation)
-    service = get_service(operation)
 
     case Auth.headers(http_method, url, service, config, headers, body) do
       {:ok, signed_headers} ->
         ExAws.Request.request(http_method, url, body, signed_headers, config, service)
+        |> ExAws.Request.default_aws_error()
+        |> parse_response(operation)
 
       {:error, reason} ->
         {:error, reason}
@@ -93,6 +99,55 @@ defmodule ExAws.SigV4a do
 
   defp resolve_runtime_value(value, _config), do: value
 
+  defp preprocess_operation(%ExAws.Operation.S3{} = operation, config, :s3) do
+    # For S3 operations, add bucket to path/host and resource to params
+    {operation, config} = add_s3_bucket_to_url(operation, config)
+    operation = add_s3_resource_to_params(operation)
+    {operation, config}
+  end
+
+  defp preprocess_operation(operation, config, _service) do
+    # For other services, no preprocessing needed
+    {operation, config}
+  end
+
+  # Adds S3 bucket to URL path or host based on config
+  # Based on ExAws.Operation.S3 protocol implementation
+  defp add_s3_bucket_to_url(%{bucket: nil} = _operation, _config) do
+    raise "ExAws.SigV4a.request/2 cannot perform operation on `nil` bucket"
+  end
+
+  defp add_s3_bucket_to_url(operation, %{virtual_host: true, bucket_as_host: true} = config) do
+    # Use bucket name as the full hostname
+    {Map.put(operation, :path, ensure_leading_slash(operation.path)),
+     Map.put(config, :host, operation.bucket)}
+  end
+
+  defp add_s3_bucket_to_url(operation, %{virtual_host: true, host: base_host} = config) do
+    # Use bucket as subdomain of base host
+    vhost_domain = "#{operation.bucket}.#{base_host}"
+
+    {Map.put(operation, :path, ensure_leading_slash(operation.path)),
+     Map.put(config, :host, vhost_domain)}
+  end
+
+  defp add_s3_bucket_to_url(operation, config) do
+    # Path-style: add bucket to path
+    path = "/#{operation.bucket}#{ensure_leading_slash(operation.path)}"
+    {Map.put(operation, :path, path), config}
+  end
+
+  defp ensure_leading_slash(<<"/", _rest::binary>> = path), do: path
+  defp ensure_leading_slash(path), do: "/#{path}"
+
+  # Adds S3 resource to params
+  defp add_s3_resource_to_params(%{resource: resource, params: params} = operation) do
+    updated_params = params |> Map.new() |> Map.put(resource, 1)
+    Map.put(operation, :params, updated_params)
+  end
+
+  defp add_s3_resource_to_params(operation), do: operation
+
   defp get_http_method(%{http_method: method}), do: method
   defp get_http_method(_), do: :get
 
@@ -113,4 +168,11 @@ defmodule ExAws.SigV4a do
     |> String.downcase()
     |> String.to_atom()
   end
+
+  # Parse the response using the operation's parser function
+  defp parse_response(response, %{parser: parser}) when is_function(parser) do
+    parser.(response)
+  end
+
+  defp parse_response(response, _operation), do: response
 end
